@@ -381,27 +381,89 @@ async def list_models(_: None = Depends(validate_api_key)):
 
     Returns a response shaped like the Anthropic models listing so that
     Claude Code and other SDK clients can validate connectivity.
+`
+    Model IDs are dynamically generated to support all current and future
+    Claude models. Routing is handled by pattern matching in ModelManager.
     """
     now = datetime.now().isoformat()
-    # Build unique model entries from the configured mapping
     model_entries = []
     seen = set()
-    for claude_id, backend_model, display_name in [
-        ("claude-3-5-haiku-20241022", config.small_model, "Claude 3.5 Haiku (proxied)"),
-        ("claude-sonnet-4-20250514", config.middle_model, "Claude Sonnet 4 (proxied)"),
-        ("claude-opus-4-20250514", config.big_model, "Claude Opus 4 (proxied)"),
-        ("claude-3-5-sonnet-20241022", config.middle_model, "Claude 3.5 Sonnet (proxied)"),
-    ]:
-        if claude_id not in seen:
-            seen.add(claude_id)
-            model_entries.append({
-                "id": claude_id,
-                "object": "model",
-                "created": 1700000000,
-                "owned_by": "anthropic-proxy",
-                "display_name": display_name,
-                "backend_model": backend_model,
-            })
+
+    # Define model tiers with their backend mappings and multiple ID variants
+    # Format: (tier_name, backend_model, model_id_and_display_variants)
+    # The tier_name maps to the pattern in ModelManager (haiku->small, sonnet->middle, opus->big)
+    model_tiers = [
+        {
+            "tier": "haiku",
+            "backend": config.small_model,
+            "variants": [
+                ("claude-haiku-4-5-20251001", "Claude Haiku 4.5 (proxied)"),
+                ("claude-haiku-4-5", "Claude Haiku 4.5 (proxied)"),
+                ("claude-3-5-haiku-20241022", "Claude 3.5 Haiku (proxied)"),
+            ],
+        },
+        {
+            "tier": "sonnet",
+            "backend": config.middle_model,
+            "variants": [
+                ("claude-sonnet-4-6", "Claude Sonnet 4.6 (proxied)"),
+                ("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5 (proxied)"),
+                ("claude-sonnet-4-20250514", "Claude Sonnet 4 (proxied)"),
+                ("claude-3-5-sonnet-20241022", "Claude 3.5 Sonnet (proxied)"),
+            ],
+        },
+        {
+            "tier": "opus",
+            "backend": config.big_model,
+            "variants": [
+                ("claude-opus-4-7", "Claude Opus 4.7 (proxied)"),
+                ("claude-opus-4-6", "Claude Opus 4.6 (proxied)"),
+                ("claude-opus-4-5-20251101", "Claude Opus 4.5 (proxied)"),
+                ("claude-opus-4-20250514", "Claude Opus 4 (proxied)"),
+            ],
+        },
+        {
+            "tier": "vision",
+            "backend": config.vision_model,
+            "variants": [
+                ("claude-haiku-4-5-20251001", "Claude Haiku 4.5 Vision (proxied)"),
+            ],
+        },
+    ]
+
+    for tier_config in model_tiers:
+        for claude_id, display_name in tier_config["variants"]:
+            if claude_id not in seen:
+                seen.add(claude_id)
+                model_entries.append({
+                    "id": claude_id,
+                    "object": "model",
+                    "created": 1700000000,
+                    "owned_by": "anthropic-proxy",
+                    "display_name": display_name,
+                    "backend_model": tier_config["backend"],
+                })
+
+    # Also include any custom model configurations from env
+    if config.big_model:
+        custom_models = [
+            (config.big_model, "BIG model"),
+            (config.middle_model, "MIDDLE model"),
+            (config.small_model, "SMALL model"),
+            (config.vision_model, "VISION model"),
+        ]
+        for model_id, model_type in custom_models:
+            if model_id and model_id not in seen:
+                seen.add(model_id)
+                model_entries.append({
+                    "id": model_id,
+                    "object": "model",
+                    "created": 1700000000,
+                    "owned_by": "anthropic-proxy",
+                    "display_name": f"Custom {model_type} (proxied)",
+                    "backend_model": model_id,
+                })
+
     return {
         "object": "list",
         "data": model_entries,
