@@ -52,16 +52,31 @@ claude-code-proxy/
 
 ### Install
 
-Using `uv`:
+The fastest path is the bundled installer, which creates a virtualenv,
+installs runtime dependencies, prompts for your Nebius API key without
+echoing it to your shell, validates the configured model IDs against
+`GET /v1/models`, and runs an end-to-end smoke test before declaring
+success:
+
+```bash
+./install.sh
+```
+
+#### Manual install
+
+If you'd rather wire things up yourself:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install --upgrade pip   # fresh venvs ship pip <22 which fails on pyproject editable installs
+.venv/bin/pip install -r requirements.txt
+cp .env.example .env                            # then edit .env to set OPENAI_API_KEY
+```
+
+Or with `uv`:
 
 ```bash
 uv sync
-```
-
-Using `pip`:
-
-```bash
-python -m pip install -e ".[dev]"
 ```
 
 ### Configure
@@ -101,9 +116,23 @@ uv run claude-code-proxy-nebius
 
 ### Use with Claude Code
 
+The recommended pattern is a shell function so the *command name* tells you
+which provider you're hitting — bare `claude` keeps using Anthropic, a
+named alias (here, `claudius`) routes through this proxy:
+
 ```bash
-ANTHROPIC_BASE_URL="http://localhost:8083" ANTHROPIC_API_KEY="any-value" claude
+# Add to ~/.zshrc or ~/.bashrc
+claudius() {
+  ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_API_KEY=claude-local claude "$@"
+}
 ```
+
+Open a new shell (or `source` your rc), then run `claudius` from any
+directory. The env vars exist only for the duration of that invocation,
+so there's no hidden shell state to remember to clear.
+
+Alternative: export `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` globally
+if you want every `claude` invocation routed through the proxy.
 
 If `IGNORE_CLIENT_API_KEY=false`, the client key must match `ANTHROPIC_API_KEY`.
 
