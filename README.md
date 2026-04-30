@@ -116,23 +116,31 @@ uv run claude-code-proxy-nebius
 
 ### Use with Claude Code
 
-The recommended pattern is a shell function so the *command name* tells you
-which provider you're hitting — bare `claude` keeps using Anthropic, a
-named alias (here, `claudius`) routes through this proxy:
+Pick one of these patterns and add it to your shell rc (`~/.zshrc` or
+`~/.bashrc`), then open a new shell:
+
+**Option A — separate command.** Bare `claude` keeps using Anthropic; a
+named alias (here, `claudius`) routes through this proxy. The env vars
+exist only for the duration of that invocation, so there's no hidden
+shell state.
 
 ```bash
-# Add to ~/.zshrc or ~/.bashrc
 claudius() {
   ANTHROPIC_BASE_URL=http://localhost:8083 ANTHROPIC_API_KEY=claude-local claude "$@"
 }
 ```
 
-Open a new shell (or `source` your rc), then run `claudius` from any
-directory. The env vars exist only for the duration of that invocation,
-so there's no hidden shell state to remember to clear.
+**Option B — global exports.** Every `claude` invocation routes through
+the proxy; convenient if you mostly use Claude Code with this proxy.
 
-Alternative: export `ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY` globally
-if you want every `claude` invocation routed through the proxy.
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:8083
+export ANTHROPIC_API_KEY=claude-local
+```
+
+Option A keeps the provider visible in the command name. Option B is
+fewer keystrokes per invocation. The bundled `install.sh` can write
+either snippet for you at the end of install.
 
 If `IGNORE_CLIENT_API_KEY=false`, the client key must match `ANTHROPIC_API_KEY`.
 
