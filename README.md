@@ -40,6 +40,11 @@ claude-code-proxy/
 - Schema-less Claude Code tool conversion
 - Image-aware routing to a vision model
 - Bundled MCP support with repo-relative launchers
+- Deterministic prefix-cache discipline for vLLM/SGLang KV reuse on Nebius
+- Anthropic-compatible `/v1/messages/count_tokens` (counts tools too)
+- Pair-aware context auto-truncation (never orphans tool_results)
+- Tool-call JSON repair (trailing commas, unescaped newlines) and duplicate
+  tool-call dedup for open models — always on, no configuration needed
 
 ## Quick Start
 
