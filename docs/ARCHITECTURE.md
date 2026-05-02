@@ -69,6 +69,8 @@ Inside Claude Code, users can type `/model <alias>` to switch upstream models wi
 | `hermes` | `NousResearch/Hermes-4-405B` | `HERMES_MODEL` |
 | `gpt` | `openai/gpt-oss-120b` | `GPT_MODEL` |
 | `llama` | `meta-llama/Meta-Llama-3.1-8B-Instruct` | `LLAMA_MODEL` |
+| `prime` | `PrimeIntellect/INTELLECT-3` | `PRIME_MODEL` |
+| `deepseek` | `deepseek-ai/DeepSeek-V3.2` | `DEEPSEEK_MODEL` |
 
 Resolution rules in order:
 

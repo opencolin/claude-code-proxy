@@ -93,6 +93,8 @@ class Config:
         self.llama_model = os.environ.get(
             "LLAMA_MODEL", "meta-llama/Meta-Llama-3.1-8B-Instruct"
         )
+        self.prime_model = os.environ.get("PRIME_MODEL", "PrimeIntellect/INTELLECT-3")
+        self.deepseek_model = os.environ.get("DEEPSEEK_MODEL", "deepseek-ai/DeepSeek-V3.2")
 
         self.disable_tools = os.environ.get("DISABLE_TOOLS", "false").lower() in (
             "1",

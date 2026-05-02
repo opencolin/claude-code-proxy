@@ -594,6 +594,8 @@ async def list_models(_: None = Depends(validate_api_key)):
         ("hermes", config.hermes_model, "Hermes (proxied alias)"),
         ("gpt", config.gpt_model, "GPT-OSS (proxied alias)"),
         ("llama", config.llama_model, "Llama (proxied alias)"),
+        ("prime", config.prime_model, "Prime Intellect (proxied alias)"),
+        ("deepseek", config.deepseek_model, "DeepSeek (proxied alias)"),
     ]
     for alias_id, backend, display in alias_entries:
         if alias_id not in seen:

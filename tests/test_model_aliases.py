@@ -70,6 +70,8 @@ def test_new_aliases_route_to_their_defaults(monkeypatch):
     monkeypatch.setattr(config, "hermes_model", "NousResearch/Hermes-4-405B")
     monkeypatch.setattr(config, "gpt_model", "openai/gpt-oss-120b")
     monkeypatch.setattr(config, "llama_model", "meta-llama/Meta-Llama-3.1-8B-Instruct")
+    monkeypatch.setattr(config, "prime_model", "PrimeIntellect/INTELLECT-3")
+    monkeypatch.setattr(config, "deepseek_model", "deepseek-ai/DeepSeek-V3.2")
     mm = ModelManager(config)
 
     assert mm.map_claude_model_to_openai("qwen") == "Qwen/Qwen3.5-397B-A17B"
@@ -80,3 +82,5 @@ def test_new_aliases_route_to_their_defaults(monkeypatch):
     assert mm.map_claude_model_to_openai("hermes") == "NousResearch/Hermes-4-405B"
     assert mm.map_claude_model_to_openai("gpt") == "openai/gpt-oss-120b"
     assert mm.map_claude_model_to_openai("llama") == "meta-llama/Meta-Llama-3.1-8B-Instruct"
+    assert mm.map_claude_model_to_openai("prime") == "PrimeIntellect/INTELLECT-3"
+    assert mm.map_claude_model_to_openai("deepseek") == "deepseek-ai/DeepSeek-V3.2"

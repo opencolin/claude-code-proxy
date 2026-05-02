@@ -21,6 +21,8 @@ def _build_alias_map(cfg) -> dict:
         "hermes": cfg.hermes_model,
         "gpt": cfg.gpt_model,
         "llama": cfg.llama_model,
+        "prime": cfg.prime_model,
+        "deepseek": cfg.deepseek_model,
     }
 
 
