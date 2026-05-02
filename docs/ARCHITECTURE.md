@@ -59,7 +59,7 @@ Inside Claude Code, users can type `/model <alias>` to switch upstream models wi
 | `sonnet` | `MIDDLE_MODEL` | (use `MIDDLE_MODEL`) |
 | `haiku` | `SMALL_MODEL` | (use `SMALL_MODEL`) |
 | `glm` | `BIG_MODEL` | `GLM_MODEL` |
-| `kimi` | `moonshotai/Kimi-K2-Instruct` | `KIMI_MODEL` |
+| `kimi` | `moonshotai/Kimi-K2.5` | `KIMI_MODEL` |
 | `gemma` | `google/gemma-3-27b-it` | `GEMMA_MODEL` |
 
 Aliases match either as the full model id (e.g. `/model glm`) or as a keyword inside a longer id (e.g. `glm-5`, `claude-opus-4-5`). Native ids that begin with `gpt-`, `o1-`, `ep-`, `doubao-`, or `deepseek-` pass through verbatim and bypass the alias table.

@@ -74,7 +74,7 @@ class Config:
         # route to the right upstream without editing .env. `glm` defaults to
         # whatever BIG_MODEL is so a Nebius-only deployment works out of the box.
         self.glm_model = os.environ.get("GLM_MODEL", self.big_model)
-        self.kimi_model = os.environ.get("KIMI_MODEL", "moonshotai/Kimi-K2-Instruct")
+        self.kimi_model = os.environ.get("KIMI_MODEL", "moonshotai/Kimi-K2.5")
         self.gemma_model = os.environ.get("GEMMA_MODEL", "google/gemma-3-27b-it")
 
         self.disable_tools = os.environ.get("DISABLE_TOOLS", "false").lower() in (
