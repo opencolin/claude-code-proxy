@@ -2,17 +2,29 @@
 
 A two-file Claude Code custom slash command that surfaces this proxy's full Token Factory shortcut catalog inside Claude Code (the built-in `/model` picker only shows the four hardcoded Anthropic entries plus the active custom model — see `docs/ARCHITECTURE.md` for why).
 
-Typing `/models` renders a 30-entry combined list (curated shortcuts + any live catalog extras), takes a number or pasted id, and writes the choice to a project-scoped `.claude/settings.local.json` (when `CLAUDE_CODE_PROXY_DIR` is set by the `claudius` wrapper) or `~/.claude/settings.local.json` otherwise. The next request in your session uses the new model.
+Typing `/models` renders a 30-entry combined list (curated shortcuts + any live catalog extras), takes a number or pasted id, and writes the choice to `.claude/settings.local.json`. The next request in your session uses the new model.
 
-> **Important:** project-scoping matters. If you write a proxy-only alias like `glm` or `qwen` to user-level `~/.claude/settings.local.json`, it leaks into every Claude Code session on the machine — including bare `claude` calls hitting `api.anthropic.com`, which respond with `"<alias> is temporarily unavailable"`. Setting `CLAUDE_CODE_PROXY_DIR` (and a wrapper that `cd`s there) keeps the picker confined to claudius sessions.
+> **Why scoping matters:** writing a Nebius-only alias like `glm` to user-level `~/.claude/settings.local.json` leaks into every Claude Code session on the machine — including bare `claude` hitting `api.anthropic.com`, which replies with `"<alias> is temporarily unavailable"`. The helper avoids this by writing project-scoped instead of user-level whenever it detects a proxy session (see "Where settings get written" below).
 
 ## Files
 
 - **`models.md`** — the slash command body. Pinned to `model: glm` so the command itself runs on a model capable enough to follow tool-use instructions, regardless of what's currently selected. Tells the model to call `_models_helper.py list` and NOT to retype the bash output (see "Why bash output, not model text" below).
 - **`_models_helper.py`** — companion script. Subcommands:
   - `list` — print the full numbered catalog (hardcoded shortcuts + any live extras) to stdout. The slash command runs this; Claude Code displays it as bash output (collapsed past ~3 lines with a `ctrl+o to expand` hint).
-  - `set <id-or-number>` — writes the choice to `$CLAUDE_CODE_PROXY_DIR/.claude/settings.local.json` (project-scoped) when the env var is set, otherwise to `~/.claude/settings.local.json` (user-level). Resolves numbers (1-30), short names, and full ids.
+  - `set <id-or-number>` — writes the choice to `settings.local.json` at the path described in "Where settings get written" below. Resolves numbers (1-30), short names, and full ids.
   - `extras` — fetches `/v1/models` and prints only the upstream ids that aren't in the hardcoded list, one per line. Empty when the hardcoded list covers everything.
+
+## Where settings get written
+
+`_models_helper.py set` picks one of three locations, in priority order:
+
+1. **`$CLAUDE_CODE_PROXY_DIR/.claude/settings.local.json`** — when the env var is set. Use this when you want a single, fixed dir to own all picker state regardless of where you launched the session from. Set it in your shell rc and a wrapper that `cd`s to that dir.
+
+2. **`<cwd>/.claude/settings.local.json`** — when `ANTHROPIC_BASE_URL` is set (i.e. you're in a proxy session via the upstream `claude --proxy` / `claudius` wrapper from `docs/SHELL_FUNCTION.md`) but `CLAUDE_CODE_PROXY_DIR` is not. The helper auto-creates `.claude/` in your current working directory and writes there. Picker state is per-project; bare `claude` in *other* dirs is unaffected.
+
+3. **`~/.claude/settings.local.json`** — fallback when neither env var is set. The leak-prone path; only reached when there's no signal you're proxying at all.
+
+Trade-off for path 2: bare `claude` launched from the *same* cwd will still see the project-scoped settings and break on the alias. The leak shrinks from "global across the machine" to "per-project" — adequate when each project keeps its own picker state but not perfect. For a hard separation, set `CLAUDE_CODE_PROXY_DIR` to a dedicated dir nobody runs bare `claude` from.
 
 ## Why bash output, not model text
 
@@ -29,20 +41,13 @@ cp scripts/claude-code/_models_helper.py  ~/.claude/commands/
 chmod +x ~/.claude/commands/_models_helper.py
 ```
 
-Then update your `claudius` shell wrapper to scope settings to the proxy install:
+If you've already installed the upstream `claude --proxy` / `claudius` wrapper (from `docs/SHELL_FUNCTION.md` or `install.sh`), nothing else to do — the helper auto-detects proxy sessions via `ANTHROPIC_BASE_URL` and writes project-scoped (path 2 above).
+
+For a hard pin to a single dir instead of cwd-scoping, optionally export `CLAUDE_CODE_PROXY_DIR` in your shell rc — for example:
 
 ```bash
-claudius() {
-  local proxy_dir="${CLAUDE_CODE_PROXY_DIR:-$HOME/Documents/claude-nebius/proxy}"
-  ( cd "$proxy_dir" && \
-    CLAUDE_CODE_PROXY_DIR="$proxy_dir" \
-    ANTHROPIC_BASE_URL=http://localhost:8083 \
-    ANTHROPIC_API_KEY=claude-local \
-    claude "$@" )
-}
+export CLAUDE_CODE_PROXY_DIR="$HOME/Documents/claude-code-proxy"
 ```
-
-The wrapper `cd`s into the proxy dir for the duration of the `claude` session so Claude Code reads project-scoped settings from there. Sub-shell `( ... )` keeps your terminal's cwd unchanged.
 
 Start a fresh Claude Code session (`claudius`) and try `/models`.
 

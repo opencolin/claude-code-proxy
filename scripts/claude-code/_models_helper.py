@@ -27,18 +27,29 @@ import urllib.request
 def settings_path() -> str:
     """Where to write the model selection.
 
-    If CLAUDE_CODE_PROXY_DIR is set (typically by the claudius shell
-    wrapper), write project-scoped settings under that dir so model
-    picks don't leak into bare-claude sessions elsewhere on the machine.
-    Falls back to ~/.claude/settings.local.json (user-level) when the
-    env var isn't set, preserving the old behavior.
+    Priority order:
+      1. CLAUDE_CODE_PROXY_DIR (explicit pin) -- write to that dir's
+         .claude/settings.local.json. Useful when a single proxy dir
+         should own all picker state regardless of where claudius was
+         launched from.
+      2. ANTHROPIC_BASE_URL set (we're in a proxy session, e.g. via
+         the upstream `claude --proxy` / `claudius` wrapper from
+         docs/SHELL_FUNCTION.md) -- scope to cwd/.claude/ so picks
+         don't leak into bare `claude` invocations elsewhere on the
+         machine. (Bare claude in the same cwd will still see them;
+         that's a per-project leak rather than a global one.)
+      3. Fallback: user-level ~/.claude/settings.local.json. Only
+         reached when there's no signal we're proxying at all.
     """
     proxy_dir = os.environ.get("CLAUDE_CODE_PROXY_DIR")
     if proxy_dir:
         claude_dir = os.path.join(os.path.expanduser(proxy_dir), ".claude")
-        os.makedirs(claude_dir, exist_ok=True)
-        return os.path.join(claude_dir, "settings.local.json")
-    return os.path.expanduser("~/.claude/settings.local.json")
+    elif os.environ.get("ANTHROPIC_BASE_URL"):
+        claude_dir = os.path.join(os.getcwd(), ".claude")
+    else:
+        return os.path.expanduser("~/.claude/settings.local.json")
+    os.makedirs(claude_dir, exist_ok=True)
+    return os.path.join(claude_dir, "settings.local.json")
 
 # Curated shortname -> full upstream id, in display order. Each entry must
 # point at an id that's actually live on Nebius's Token Factory; if a name
