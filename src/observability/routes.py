@@ -4,6 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 
+from src.conversion.request_converter import _get_context_limit
 from src.core.config import config
 from src.core.model_manager import model_manager
 from src.observability.store import observability_recorder
@@ -112,4 +113,75 @@ async def observability_config(_: None = Depends(validate_dashboard_api_key)):
             "opus": model_manager.config.big_model,
             "image": model_manager.config.vision_model,
         },
+    }
+
+
+@router.get("/api/observability/context-usage")
+async def observability_context_usage(
+    session_id: Optional[str] = Header(None, alias="x-claude-code-session-id"),
+    session_name: Optional[str] = Header(None, alias="x-session-name"),
+    _: None = Depends(validate_dashboard_api_key),
+):
+    """Return per-session context-window usage for Claude Code statusline.
+
+    Accepts either x-claude-code-session-id (from Claude Code itself) or
+    x-session-name (from the session forwarder). Prefers session_name when
+    both are present so that port-isolated sessions report correctly.
+    """
+    if not session_id and not session_name:
+        return {
+            "total_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "request_count": 0,
+            "context_limit": 0,
+            "remaining_tokens": 0,
+            "percentage_used": 0.0,
+            "percent": 0.0,
+            "model": None,
+        }
+
+    if session_name:
+        usage = observability_recorder.fetch_context_usage_by_name(session_name)
+    else:
+        usage = observability_recorder.fetch_context_usage(session_id)
+    if not usage:
+        return {
+            "total_tokens": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "request_count": 0,
+            "context_limit": 0,
+            "remaining_tokens": 0,
+            "percentage_used": 0.0,
+            "percent": 0.0,
+            "model": None,
+        }
+
+    backend = usage["backend_model"] or ""
+    claude_model = usage["claude_model"] or ""
+    total = usage["total_tokens"] or 0
+
+    # Calculate percentage against a 1M context window to align with how
+    # Claude Code /context reports free-space percentage on newer models.
+    CONTEXT_LIMIT = 1_048_576
+    remaining = max(CONTEXT_LIMIT - total, 0)
+    percentage = round((total / CONTEXT_LIMIT) * 100, 2)
+
+    return {
+        "total_tokens": total,
+        "input_tokens": usage["input_tokens"] or 0,
+        "output_tokens": usage["output_tokens"] or 0,
+        "cache_read_input_tokens": usage["cache_read_input_tokens"] or 0,
+        "cache_creation_input_tokens": usage["cache_creation_input_tokens"] or 0,
+        "request_count": usage["request_count"] or 0,
+        "context_limit": CONTEXT_LIMIT,
+        "remaining_tokens": remaining,
+        "percentage_used": percentage,
+        "percent": percentage,
+        "model": claude_model or backend,
     }
