@@ -202,31 +202,30 @@ async def observability_context_usage(
     claude_model = usage["claude_model"] or ""
     real_total = usage["total_tokens"] or 0
 
-    # Proportional context scaling:
-    # If the real model has a 256K context window and Claude Code
-    # assumes a 1M context window, we scale real usage proportionally.
-    # Example: 100K real usage in 200K window = 500K reported usage.
-    REAL_CONTEXT_LIMIT = _get_context_limit(backend)
-    REPORTED_CONTEXT_LIMIT = 1_048_576
+    # Use the real model context limit but cap at 200K to align with Claude
+    # Code's internal ceiling. The backend model may have more (256K), but
+    # Claude Code caps at 200K, so the percentage must match what CC sees.
+    CONTEXT_LIMIT = _get_context_limit(backend)
+    CONTEXT_LIMIT = min(CONTEXT_LIMIT, 200_000) if CONTEXT_LIMIT > 0 else 200_000
 
-    if REAL_CONTEXT_LIMIT > 0:
-        usage_ratio = real_total / REAL_CONTEXT_LIMIT
-        scaled_total = int(usage_ratio * REPORTED_CONTEXT_LIMIT)
-        percentage = round(usage_ratio * 100, 2)
+    if CONTEXT_LIMIT > 0:
+        raw_percentage = round(real_total / CONTEXT_LIMIT * 100, 2)
+        # Apply user-configured offset so the statusline can read higher/lower
+        adjusted = max(0, min(100, raw_percentage + config.statusline_percent_adjust))
+        percentage = round(adjusted, 2)
+        remaining = int(CONTEXT_LIMIT * (1 - percentage / 100))
     else:
-        scaled_total = 0
         percentage = 0.0
-
-    remaining = max(REPORTED_CONTEXT_LIMIT - scaled_total, 0)
+        remaining = 0
 
     return {
-        "total_tokens": scaled_total,
+        "total_tokens": real_total,
         "input_tokens": usage["input_tokens"] or 0,
         "output_tokens": usage["output_tokens"] or 0,
         "cache_read_input_tokens": usage["cache_read_input_tokens"] or 0,
         "cache_creation_input_tokens": usage["cache_creation_input_tokens"] or 0,
         "request_count": usage["request_count"] or 0,
-        "context_limit": REPORTED_CONTEXT_LIMIT,
+        "context_limit": CONTEXT_LIMIT,
         "remaining_tokens": remaining,
         "percentage_used": percentage,
         "percent": percentage,

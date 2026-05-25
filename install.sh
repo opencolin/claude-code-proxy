@@ -140,6 +140,8 @@ trap cleanup EXIT
 
 PORT="$(grep -E '^PORT=' .env 2>/dev/null | tail -n1 | cut -d= -f2 | tr -d '"' || echo 8083)"
 PORT="${PORT:-8083}"
+BIG_LIMIT="$(grep -E '^BIG_MODEL_CONTEXT_LIMIT=' .env 2>/dev/null | tail -n1 | cut -d= -f2 | tr -d '"' || echo 0)"
+BIG_LIMIT="${BIG_LIMIT:-0}"
 
 for _ in $(seq 1 30); do
   if curl -sf -m 2 "http://localhost:${PORT}/health" >/dev/null 2>&1; then break; fi
@@ -288,6 +290,7 @@ prepare_shell_profile() {
 append_posix_shell_function() {
     # REPO_ROOT is already absolute at this point (set line 31)
     local _repo_root="$REPO_ROOT"
+    local _ctx_limit="${BIG_LIMIT:-0}"
     cat >> "$SHELL_RC" <<SHELL_FUNC
 
 # Claude Shell Function — enables claude, claude --proxy, and claudius
@@ -322,6 +325,7 @@ claude() {
             unset ANTHROPIC_API_KEY
             export ANTHROPIC_AUTH_TOKEN="claude-local"
             export ANTHROPIC_BASE_URL="\$forwarder_url"
+            [ -n "${_ctx_limit}" ] && [ "${_ctx_limit}" -lt 1000000 ] && export ANTHROPIC_MODEL="claude-opus-4-7"
             command claude "\${@:2}"
         )
         local claude_exit=\$?
@@ -347,6 +351,7 @@ SHELL_FUNC
 
 append_pwsh_shell_function() {
     local _repo_root="$REPO_ROOT"
+    local _ctx_limit="${BIG_LIMIT:-0}"
     cat >> "$SHELL_RC" <<PWSH_FUNC
 
 # Claude Shell Function - enables claude, claude --proxy, and claudius
@@ -395,6 +400,7 @@ function claude {
             \$env:ANTHROPIC_AUTH_TOKEN = "claude-local"
             Remove-Item Env:ANTHROPIC_API_KEY -ErrorAction SilentlyContinue
             \$env:ANTHROPIC_BASE_URL = \$forwarderUrl
+            if (${_ctx_limit} -and ${_ctx_limit} -lt 1000000) { \$env:ANTHROPIC_MODEL = "claude-opus-4-7" }
             & \$claudeCommand @remainingArgs
         } finally {
             # Clean up forwarder

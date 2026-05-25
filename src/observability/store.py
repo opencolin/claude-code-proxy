@@ -252,11 +252,16 @@ class ObservabilityRecorder:
             return None
 
         with self._connect() as conn:
+            # Latest non-zero request: use the most recent request with actual
+            # token usage so that context reflects the *current* state after
+            # Claude Code autocompacts, rather than the all-time peak (MAX).
+            # Local-optimisation (0-token) requests are excluded.
             latest = conn.execute(
                 """
-                SELECT claude_model, backend_model, completed_at
+                SELECT claude_model, backend_model, completed_at,
+                       total_tokens, input_tokens, output_tokens
                 FROM requests
-                WHERE session_id = ? AND status = 'success'
+                WHERE session_id = ? AND status = 'success' AND total_tokens > 0
                 ORDER BY started_at_unix DESC
                 LIMIT 1
                 """,
@@ -265,14 +270,9 @@ class ObservabilityRecorder:
             if latest is None:
                 return None
 
-            # Use MAX for tokens so local-optimisation (0-token housekeeping)
-            # requests do not drop the reported context size.
             totals = conn.execute(
                 """
                 SELECT
-                    COALESCE(MAX(total_tokens), 0) AS total_tokens,
-                    COALESCE(MAX(input_tokens), 0) AS input_tokens,
-                    COALESCE(MAX(output_tokens), 0) AS output_tokens,
                     COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
                     COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
                     COUNT(*) AS request_count
@@ -285,9 +285,9 @@ class ObservabilityRecorder:
         return {
             "claude_model": latest["claude_model"],
             "backend_model": latest["backend_model"],
-            "total_tokens": totals["total_tokens"] or 0,
-            "input_tokens": totals["input_tokens"] or 0,
-            "output_tokens": totals["output_tokens"] or 0,
+            "total_tokens": latest["total_tokens"] or 0,
+            "input_tokens": latest["input_tokens"] or 0,
+            "output_tokens": latest["output_tokens"] or 0,
             "cache_read_input_tokens": totals["cache_read_input_tokens"] or 0,
             "cache_creation_input_tokens": totals["cache_creation_input_tokens"] or 0,
             "request_count": totals["request_count"],
@@ -300,9 +300,10 @@ class ObservabilityRecorder:
         with self._connect() as conn:
             latest = conn.execute(
                 """
-                SELECT claude_model, backend_model, completed_at
+                SELECT claude_model, backend_model, completed_at,
+                       total_tokens, input_tokens, output_tokens
                 FROM requests
-                WHERE session_name = ? AND status = 'success'
+                WHERE session_name = ? AND status = 'success' AND total_tokens > 0
                 ORDER BY started_at_unix DESC
                 LIMIT 1
                 """,
@@ -314,9 +315,6 @@ class ObservabilityRecorder:
             totals = conn.execute(
                 """
                 SELECT
-                    COALESCE(MAX(total_tokens), 0) AS total_tokens,
-                    COALESCE(MAX(input_tokens), 0) AS input_tokens,
-                    COALESCE(MAX(output_tokens), 0) AS output_tokens,
                     COALESCE(SUM(cache_read_input_tokens), 0) AS cache_read_input_tokens,
                     COALESCE(SUM(cache_creation_input_tokens), 0) AS cache_creation_input_tokens,
                     COUNT(*) AS request_count
@@ -329,9 +327,9 @@ class ObservabilityRecorder:
         return {
             "claude_model": latest["claude_model"],
             "backend_model": latest["backend_model"],
-            "total_tokens": totals["total_tokens"] or 0,
-            "input_tokens": totals["input_tokens"] or 0,
-            "output_tokens": totals["output_tokens"] or 0,
+            "total_tokens": latest["total_tokens"] or 0,
+            "input_tokens": latest["input_tokens"] or 0,
+            "output_tokens": latest["output_tokens"] or 0,
             "cache_read_input_tokens": totals["cache_read_input_tokens"] or 0,
             "cache_creation_input_tokens": totals["cache_creation_input_tokens"] or 0,
             "request_count": totals["request_count"],
