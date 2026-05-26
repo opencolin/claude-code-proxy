@@ -361,7 +361,12 @@ step_06_smoke_test() {
     log=$(mktemp -t claude-proxy-smoke.XXXXXX.log)
 
     info "Starting proxy on port $port ..."
-    .venv/bin/python start_proxy.py >"$log" 2>&1 &
+    # Clear any externally-exported API keys so the proxy reads exclusively
+    # from the .env file we just created.
+    env -u OPENAI_API_KEY \
+        -u ANTHROPIC_API_KEY \
+        -u ANTHROPIC_AUTH_TOKEN \
+        .venv/bin/python start_proxy.py >"$log" 2>&1 &
     pid=$!
 
     # Cleanup on EXIT only (not when returning success)
