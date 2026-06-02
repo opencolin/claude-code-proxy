@@ -3,9 +3,10 @@ import json
 import logging
 import sqlite3
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from src.core.config import config
 from src.observability.pricing import PricingCatalog
@@ -737,10 +738,15 @@ class ObservabilityRecorder:
         ).fetchall()
         return [dict(row) for row in rows]
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            with conn:
+                yield conn
+        finally:
+            conn.close()
 
     def _arguments_preview(self, arguments: Any) -> str:
         if not self.store_tool_args:
