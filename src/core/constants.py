@@ -16,6 +16,9 @@ class Constants:
     STOP_MAX_TOKENS = "max_tokens"
     STOP_TOOL_USE = "tool_use"
     STOP_ERROR = "error"
+    STOP_REFUSAL = "refusal"
+    STOP_PAUSE_TURN = "pause_turn"
+    STOP_MODEL_CONTEXT_WINDOW_EXCEEDED = "model_context_window_exceeded"
 
     EVENT_MESSAGE_START = "message_start"
     EVENT_MESSAGE_STOP = "message_stop"

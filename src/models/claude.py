@@ -26,6 +26,23 @@ class ClaudeContentBlockToolResult(BaseModel):
     content: Union[str, List[Dict[str, Any]], Dict[str, Any]]
 
 
+class ClaudeContentBlockThinking(BaseModel):
+    """Extended-thinking block echoed back by clients (interleaved thinking).
+
+    Anthropic sends prior `thinking`/`redacted_thinking` blocks inside assistant
+    turns. They must be accepted (not 422'd) even though OpenAI-compatible
+    backends don't consume them; conversion deliberately drops them.
+    """
+
+    type: Literal["thinking", "redacted_thinking"]
+    thinking: Optional[str] = None
+    signature: Optional[str] = None
+    data: Optional[str] = None  # present on redacted_thinking
+
+    class Config:
+        extra = "allow"
+
+
 class ClaudeSystemContent(BaseModel):
     type: Literal["text"]
     text: str
@@ -41,6 +58,7 @@ class ClaudeMessage(BaseModel):
                 ClaudeContentBlockImage,
                 ClaudeContentBlockToolUse,
                 ClaudeContentBlockToolResult,
+                ClaudeContentBlockThinking,
             ]
         ],
     ]
@@ -82,7 +100,53 @@ class ClaudeTool(BaseModel):
 
 
 class ClaudeThinkingConfig(BaseModel):
-    enabled: bool = True
+    """Extended-thinking configuration.
+
+    Anthropic's wire shape is ``{"type": "enabled"|"disabled", "budget_tokens": N}``.
+    Some clients (and older builds) send ``{"enabled": bool}``. Both are accepted.
+    Use :meth:`is_enabled` instead of reading a single field.
+    """
+
+    # NOTE: `type` is intentionally a free string, not a Literal. Anthropic adds
+    # new thinking modes over time (e.g. "enabled", "disabled", "adaptive"); a
+    # strict enum would 422 on any value we haven't seen yet. "disabled" is the
+    # only value that turns thinking off — everything else is an enabled mode.
+    type: Optional[str] = None
+    budget_tokens: Optional[int] = None
+    enabled: Optional[bool] = None  # legacy/alternate clients
+    # "summarized" | "omitted". Controls whether thinking *text* is returned.
+    # On Opus 4.7/4.8 (adaptive) the API default is "omitted".
+    display: Optional[str] = None
+
+    class Config:
+        extra = "allow"
+
+    def is_enabled(self) -> bool:
+        if self.type is not None:
+            return self.type.lower() != "disabled"
+        if self.enabled is not None:
+            return bool(self.enabled)
+        # A thinking object present with neither field set defaults to enabled,
+        # matching the previous behavior (enabled defaulted to True).
+        return True
+
+    def surfaces_text(self) -> bool:
+        """Whether the model's thinking *text* should be surfaced to the client.
+
+        Honors `display` exactly when the client sets it. When unset, mirrors the
+        Anthropic model defaults: adaptive mode defaults to "omitted" (Opus
+        4.7/4.8), classic `enabled` mode defaults to "summarized". Returns False
+        whenever thinking is disabled.
+        """
+        if not self.is_enabled():
+            return False
+        disp = (self.display or "").lower()
+        if disp == "summarized":
+            return True
+        if disp == "omitted":
+            return False
+        # No explicit display: adaptive -> omitted, enabled/other -> summarized.
+        return (self.type or "").lower() != "adaptive"
 
 
 class ClaudeMessagesRequest(BaseModel):

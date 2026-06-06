@@ -16,6 +16,36 @@ from openai._exceptions import (
 
 logger = logging.getLogger(__name__)
 
+# Models that returned a 400 specifically because of `reasoning_effort`. Once a
+# model rejects it, we stop sending it (avoids repeating the failed call). This
+# lets effort be forwarded dynamically without permanent latency on backends
+# that don't support the parameter.
+_EFFORT_UNSUPPORTED_MODELS: set = set()
+
+
+def reasoning_effort_supported(model: str) -> bool:
+    """False once a backend model has rejected `reasoning_effort`."""
+    return model not in _EFFORT_UNSUPPORTED_MODELS
+
+
+def _maybe_drop_reasoning_effort(req: Dict[str, Any], error: Exception) -> bool:
+    """If a 400 was caused by `reasoning_effort`, drop it (and remember the
+    model can't take it) so the caller can retry once. Returns True if dropped."""
+    if "reasoning_effort" not in req:
+        return False
+    if "reasoning_effort" not in str(error).lower():
+        return False
+    model = req.get("model")
+    if model:
+        _EFFORT_UNSUPPORTED_MODELS.add(model)
+    req.pop("reasoning_effort", None)
+    logger.warning(
+        "Backend rejected reasoning_effort for model %s; retrying without it "
+        "and disabling it for this model.",
+        model,
+    )
+    return True
+
 
 class OpenAIClient:
     """Async OpenAI client with cancellation support."""
@@ -120,6 +150,8 @@ class OpenAIClient:
                     self._log_openai_error(e)
                     raise HTTPException(status_code=401, detail=self.classify_openai_error(str(e)))
                 except BadRequestError as e:
+                    if _maybe_drop_reasoning_effort(request, e):
+                        continue
                     self._log_openai_error(e)
                     raise HTTPException(status_code=400, detail=self.classify_openai_error(str(e)))
                 except (RateLimitError, APIConnectionError, APITimeoutError, APIError) as e:
@@ -178,6 +210,8 @@ class OpenAIClient:
                     self._log_openai_error(e)
                     raise HTTPException(status_code=401, detail=self.classify_openai_error(str(e)))
                 except BadRequestError as e:
+                    if _maybe_drop_reasoning_effort(stream_request, e):
+                        continue
                     self._log_openai_error(e)
                     raise HTTPException(status_code=400, detail=self.classify_openai_error(str(e)))
                 except (RateLimitError, APIConnectionError, APITimeoutError, APIError) as e:

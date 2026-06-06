@@ -63,6 +63,15 @@ class Config:
         self.middle_model = os.environ.get("MIDDLE_MODEL", self.big_model)
         self.small_model = os.environ.get("SMALL_MODEL", "zai-org/GLM-4.5")
         self.vision_model = os.environ.get("VISION_MODEL", "Qwen/Qwen2.5-VL-72B-Instruct")
+
+        # Force how thinking text is returned, overriding the client `display`
+        # and the per-mode default. "" = honor the request (adaptive->omitted,
+        # enabled->summarized). "summarized" = always surface backend reasoning
+        # as thinking blocks; "omitted" = never surface thinking text.
+        # Undocumented escape hatch (not in .env.example) — cosmetic only.
+        self.thinking_display_override = os.environ.get(
+            "THINKING_DISPLAY_OVERRIDE", ""
+        ).strip().lower()
         self.disable_tools = os.environ.get("DISABLE_TOOLS", "false").lower() in (
             "1",
             "true",

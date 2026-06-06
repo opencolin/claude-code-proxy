@@ -18,6 +18,7 @@ Before making non-trivial changes, prefer the tracked reference docs in `docs/`:
 - Prefer focused, surgical changes over speculative refactors.
 - Keep public documentation in tracked files under `docs/`.
 - Do not depend on ignored local-only state such as `.claude/`.
+- For any user-facing change, add an entry under `[Unreleased]` in `CHANGELOG.md`.
 
 ## Repository Layout
 

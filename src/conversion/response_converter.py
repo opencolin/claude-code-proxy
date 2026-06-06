@@ -10,6 +10,7 @@ from typing import Optional
 from fastapi import HTTPException, Request
 
 from src.conversion.request_converter import _count_tokens_text
+from src.core.config import config
 from src.core.constants import Constants
 from src.models.claude import ClaudeMessagesRequest
 
@@ -88,6 +89,9 @@ def _map_finish_reason(finish_reason: Optional[str]) -> str:
         "length": Constants.STOP_MAX_TOKENS,
         "tool_calls": Constants.STOP_TOOL_USE,
         "function_call": Constants.STOP_TOOL_USE,
+        # Provider safety stop -> Claude "refusal" so the CLI does not treat a
+        # blocked completion as a normal end_turn.
+        "content_filter": Constants.STOP_REFUSAL,
     }.get(finish_reason or "stop", Constants.STOP_END_TURN)
 
 
@@ -335,6 +339,30 @@ def _split_thinking_and_text(text: str):
     return parts
 
 
+def _strip_think_tags(text: str) -> str:
+    """Drop <think>…</think> spans (including an unclosed trailing one),
+    returning only the visible text. Used when thinking must not be surfaced."""
+    return "".join(v for kind, v in _split_thinking_and_text(text) if kind == "text")
+
+
+def _should_surface_thinking(original_request) -> bool:
+    """Decide whether the backend's thinking *text* is surfaced to the client.
+
+    Honors the operator THINKING_DISPLAY_OVERRIDE, then the request's `display`
+    / mode default (adaptive -> omitted, matching Opus 4.7/4.8). When thinking
+    is disabled, never surface.
+    """
+    thinking = getattr(original_request, "thinking", None)
+    if not (thinking and thinking.is_enabled()):
+        return False
+    override = getattr(config, "thinking_display_override", "")
+    if override == "summarized":
+        return True
+    if override == "omitted":
+        return False
+    return thinking.surfaces_text()
+
+
 # ---------------------------------------------------------------------------
 # Non-streaming response converter
 # ---------------------------------------------------------------------------
@@ -354,13 +382,21 @@ def convert_openai_to_claude_response(
 
     content_blocks = []
 
-    # --- Feature 1: parse <think> tags in text content ---
+    surface_thinking = _should_surface_thinking(original_request)
+
+    # --- Provider reasoning channel (DeepSeek / MiniMax / Qwen / GLM-thinking) ---
+    # Some OpenAI-compatible backends return chain-of-thought in a separate
+    # `reasoning_content` (or `reasoning`) field rather than inline <think> tags.
+    # Only surface it when the client's thinking `display` calls for it.
+    reasoning_text = message.get("reasoning_content") or message.get("reasoning")
+    if surface_thinking and isinstance(reasoning_text, str) and reasoning_text.strip():
+        content_blocks.append({"type": "thinking", "thinking": reasoning_text})
+
+    # --- Feature 1: handle <think> tags in text content ---
     text_content = message.get("content")
     if text_content is not None:
-        thinking_enabled = original_request.thinking and getattr(
-            original_request.thinking, "enabled", False
-        )
-        if thinking_enabled and ("<think>" in text_content.lower()):
+        has_think = "<think>" in text_content.lower()
+        if surface_thinking and has_think:
             for kind, value in _split_thinking_and_text(text_content):
                 if kind == "thinking":
                     content_blocks.append(
@@ -376,6 +412,15 @@ def convert_openai_to_claude_response(
                             "text": value,
                         }
                     )
+        elif has_think:
+            # Thinking not surfaced (disabled, or display=omitted on adaptive):
+            # strip the <think> span so reasoning never leaks as visible text.
+            content_blocks.append(
+                {
+                    "type": Constants.CONTENT_TEXT,
+                    "text": _strip_think_tags(text_content),
+                }
+            )
         else:
             content_blocks.append(
                 {
@@ -473,15 +518,15 @@ async def convert_openai_streaming_to_claude_with_cancellation(
     message_id = f"msg_{uuid.uuid4().hex[:24]}"
 
     # --- Feature 1: thinking state machine ---
-    thinking_enabled = original_request.thinking and getattr(
-        original_request.thinking, "enabled", False
-    )
+    # Whether to surface the backend's thinking *text* (honors display/override).
+    surface_thinking = _should_surface_thinking(original_request)
     # States: "idle", "in_thinking", "in_text"
     thinking_state = "idle"
     text_buffer = ""  # Buffer to detect <think> at chunk boundaries
     thinking_block_index = None  # index of the current thinking content block
     text_block_started = False
     text_emitted_any = False  # Track whether any real text was emitted (Fix 4)
+    reasoning_block_open = False  # provider reasoning_content -> thinking block
 
     # We'll track the current block index dynamically
     current_block_index = -1  # will be incremented as blocks are started
@@ -577,6 +622,71 @@ async def convert_openai_streaming_to_claude_with_cancellation(
     def _get_thinking_block_index():
         return thinking_block_index
 
+    async def _emit_text_dropping_think(fragment: str):
+        """Stream visible text while silently dropping <think>…</think> spans.
+
+        Used when thinking must not be surfaced (thinking disabled, or
+        display=omitted on adaptive mode). Buffers across chunks so a tag split
+        between chunks is still caught; the think body is discarded, never sent
+        as a thinking_delta.
+        """
+        nonlocal thinking_state, text_buffer, text_emitted_any
+        text_buffer += fragment
+        while text_buffer:
+            if thinking_state == "in_thinking":
+                m = _THINK_CLOSE.search(text_buffer)
+                if m:
+                    thinking_state = "in_text"
+                    text_buffer = text_buffer[m.end():]
+                    continue
+                # No close yet: drop consumed think text, keep a short tail in
+                # case "</think>" is split across the chunk boundary.
+                safe = len(text_buffer) - 8  # len("</think>")
+                if safe > 0:
+                    text_buffer = text_buffer[safe:]
+                break
+            else:
+                m = _THINK_OPEN.search(text_buffer)
+                if m:
+                    before = text_buffer[: m.start()]
+                    if before:
+                        events = _start_text_block()
+                        if events:
+                            yield events
+                        text_emitted_any = True
+                        yield _sse(
+                            Constants.EVENT_CONTENT_BLOCK_DELTA,
+                            {
+                                "type": Constants.EVENT_CONTENT_BLOCK_DELTA,
+                                "index": _get_text_block_index(),
+                                "delta": {"type": Constants.DELTA_TEXT, "text": before},
+                            },
+                        )
+                    thinking_state = "in_thinking"
+                    text_buffer = text_buffer[m.end():]
+                    continue
+                safe_emit_len = len(text_buffer) - 6  # len("<think")
+                if safe_emit_len > 0 and "<" in text_buffer[safe_emit_len:]:
+                    to_emit = text_buffer[:safe_emit_len]
+                    text_buffer = text_buffer[safe_emit_len:]
+                else:
+                    to_emit = text_buffer
+                    text_buffer = ""
+                if to_emit:
+                    events = _start_text_block()
+                    if events:
+                        yield events
+                    text_emitted_any = True
+                    yield _sse(
+                        Constants.EVENT_CONTENT_BLOCK_DELTA,
+                        {
+                            "type": Constants.EVENT_CONTENT_BLOCK_DELTA,
+                            "index": _get_text_block_index(),
+                            "delta": {"type": Constants.DELTA_TEXT, "text": to_emit},
+                        },
+                    )
+                break
+
     async def _process_text_fragment(fragment: str):
         """Process a text fragment, handling <think> tag detection.
 
@@ -584,20 +694,10 @@ async def convert_openai_streaming_to_claude_with_cancellation(
         """
         nonlocal thinking_state, text_buffer, text_emitted_any, text_block_started
 
-        if not thinking_enabled:
-            # No thinking support — emit text directly
-            events = _start_text_block()
-            if events:
-                yield events
-            text_emitted_any = True
-            yield _sse(
-                Constants.EVENT_CONTENT_BLOCK_DELTA,
-                {
-                    "type": Constants.EVENT_CONTENT_BLOCK_DELTA,
-                    "index": _get_text_block_index(),
-                    "delta": {"type": Constants.DELTA_TEXT, "text": fragment},
-                },
-            )
+        if not surface_thinking:
+            # Thinking not surfaced — emit only visible text, strip <think> spans.
+            async for ev in _emit_text_dropping_think(fragment):
+                yield ev
             return
 
         # Buffer text to handle <think> tags that may span chunks
@@ -711,6 +811,27 @@ async def convert_openai_streaming_to_claude_with_cancellation(
                         )
                     break  # wait for more data
 
+    async def _process_reasoning_fragment(fragment: str):
+        """Stream provider reasoning_content as a Claude thinking block.
+
+        Only active when the model emits a separate reasoning channel; the
+        default <think>-tag path is unaffected.
+        """
+        nonlocal reasoning_block_open
+        if not surface_thinking or not fragment:
+            return
+        if not reasoning_block_open and thinking_block_index is None:
+            yield _start_thinking_block()
+            reasoning_block_open = True
+        yield _sse(
+            Constants.EVENT_CONTENT_BLOCK_DELTA,
+            {
+                "type": Constants.EVENT_CONTENT_BLOCK_DELTA,
+                "index": _get_thinking_block_index(),
+                "delta": {"type": "thinking_delta", "thinking": fragment},
+            },
+        )
+
     try:
         async for line in openai_stream:
             now = time.monotonic()
@@ -769,8 +890,26 @@ async def convert_openai_streaming_to_claude_with_cancellation(
                     f"[PROXY DEBUG] Raw tool_calls from model: {json.dumps(delta['tool_calls'])}"
                 )
 
+            # --- Handle provider reasoning channel (separate from content) ---
+            reasoning_fragment = delta.get("reasoning_content") or delta.get("reasoning")
+            if reasoning_fragment:
+                estimated_output_tokens += _count_tokens_text(reasoning_fragment)
+                async for event in _process_reasoning_fragment(reasoning_fragment):
+                    yield event
+
             # --- Handle text delta (with thinking support) ---
             if delta and "content" in delta and delta["content"] is not None:
+                # Close an open reasoning thinking block before text begins.
+                if reasoning_block_open:
+                    _r_idx = _get_thinking_block_index()
+                    yield _sse(
+                        Constants.EVENT_CONTENT_BLOCK_STOP,
+                        {"type": Constants.EVENT_CONTENT_BLOCK_STOP, "index": _r_idx},
+                    )
+                    stopped_blocks.add(_r_idx)
+                    reasoning_block_open = False
+                    thinking_block_index = None
+                    text_block_started = False
                 estimated_output_tokens += _count_tokens_text(delta["content"])
                 async for event in _process_text_fragment(delta["content"]):
                     yield event
@@ -991,14 +1130,16 @@ async def convert_openai_streaming_to_claude_with_cancellation(
     # --- Flush remaining text buffer (thinking support) ---
     if text_buffer:
         if thinking_state == "in_thinking":
-            yield _sse(
-                Constants.EVENT_CONTENT_BLOCK_DELTA,
-                {
-                    "type": Constants.EVENT_CONTENT_BLOCK_DELTA,
-                    "index": _get_thinking_block_index(),
-                    "delta": {"type": "thinking_delta", "thinking": text_buffer},
-                },
-            )
+            if surface_thinking:
+                yield _sse(
+                    Constants.EVENT_CONTENT_BLOCK_DELTA,
+                    {
+                        "type": Constants.EVENT_CONTENT_BLOCK_DELTA,
+                        "index": _get_thinking_block_index(),
+                        "delta": {"type": "thinking_delta", "thinking": text_buffer},
+                    },
+                )
+            # else: residual thinking text is dropped (not surfaced)
         else:
             events = _start_text_block()
             if events:

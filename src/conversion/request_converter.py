@@ -8,6 +8,7 @@ from src.conversion.computer_use import (
     convert_schema_less_tools,
     is_computer_use_tool,
 )
+from src.core.client import reasoning_effort_supported
 from src.core.config import config
 from src.core.constants import Constants
 from src.models.claude import ClaudeMessage, ClaudeMessagesRequest
@@ -107,6 +108,39 @@ def _get_context_limit(model_name: str) -> int:
 
     # No prefix match; use safe default
     return DEFAULT_CONTEXT_LIMIT
+
+
+def _map_client_effort(effort) -> Optional[str]:
+    """Map an Anthropic effort level (output_config.effort) to a backend
+    reasoning_effort. Backends generally accept low/medium/high, so the
+    Anthropic-only `xhigh`/`max` levels collapse to `high`."""
+    if not isinstance(effort, str):
+        return None
+    e = effort.strip().lower()
+    if e in ("max", "xhigh", "high"):
+        return "high"
+    if e == "medium":
+        return "medium"
+    if e == "low":
+        return "low"
+    return None
+
+
+def _client_effort(claude_request) -> Optional[str]:
+    """Read output_config.effort from the request, if present."""
+    oc = getattr(claude_request, "output_config", None)
+    if isinstance(oc, dict):
+        return oc.get("effort")
+    if oc is not None:
+        return getattr(oc, "effort", None)
+    return None
+
+
+def _resolve_reasoning_effort(claude_request) -> Optional[str]:
+    """Forward the effort the user chose in Claude Code (output_config.effort)
+    to the backend as reasoning_effort — mirroring how Claude Code's /effort
+    flows through to Anthropic. Returns None when the client sent no effort."""
+    return _map_client_effort(_client_effort(claude_request))
 
 
 def _count_tokens_text(text: str) -> int:
@@ -554,6 +588,10 @@ def convert_claude_to_openai(
         "temperature": claude_request.temperature,
         "stream": claude_request.stream,
     }
+    # Opt-in reasoning passthrough so reasoning-capable backends actually think.
+    reasoning_effort = _resolve_reasoning_effort(claude_request)
+    if reasoning_effort and reasoning_effort_supported(openai_model):
+        openai_request["reasoning_effort"] = reasoning_effort
     logger.debug(
         f"Converted Claude request to OpenAI format: {json.dumps(openai_request, indent=2, ensure_ascii=False)}"
     )
@@ -760,6 +798,12 @@ def convert_claude_assistant_message(msg: ClaudeMessage, *, allow_tools: bool) -
         return {"role": Constants.ROLE_ASSISTANT, "content": msg.content}
 
     for block in msg.content:
+        btype = getattr(block, "type", None)
+        if btype in ("thinking", "redacted_thinking"):
+            # Extended-thinking blocks echoed back by the client. OpenAI-compatible
+            # backends cannot ingest them, so we deliberately drop them here. They
+            # are still accepted at the model layer so the request does not 422.
+            continue
         if block.type == Constants.CONTENT_TEXT:
             text_parts.append(block.text)
         elif allow_tools and block.type == Constants.CONTENT_TOOL_USE:
